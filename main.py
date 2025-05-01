@@ -2,10 +2,27 @@ from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from fastapi.middleware.cors import CORSMiddleware
 from db.models import *
 from db.database import get_db
 
 app = FastAPI()
+
+origins = [
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:8000",
+    "http://localhost:3000",
+    "http://localhost:8000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["*"],
+)
+
 
 # @app.post("/users/")
 # async def create_user(name: str, email: str, db: AsyncSession = Depends(get_db)):
@@ -65,6 +82,16 @@ async def get_users(db: AsyncSession = Depends(get_db)):
     boards = result.scalars().all()
     return boards
 
+
+@app.get("/{board_tag}")
+async def get_board(board_tag: str,
+                    db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Board)
+                              .where(Board.tag == board_tag))
+    board = result.mappings().first()
+    if board is None:
+        raise HTTPException(status_code=404, detail="Board not found")
+    return board
 
 #SELECT * FROM post
 # JOIN board ON post.board_id = board.id
