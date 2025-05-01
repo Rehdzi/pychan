@@ -20,7 +20,7 @@ Accept: application/json
 
 ###
 
-GET http://127.0.0.1:8000/{{board_tag}}
+GET http://127.0.0.1:8000/{{tag}}
 Accept: application/json
 
 ###

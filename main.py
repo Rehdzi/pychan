@@ -83,12 +83,12 @@ async def get_users(db: AsyncSession = Depends(get_db)):
     return boards
 
 
-@app.get("/{board_tag}")
-async def get_board(board_tag: str,
+@app.get("/{tag}")
+async def get_board(tag: str,
                     db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Board)
-                              .where(Board.tag == board_tag))
-    board = result.mappings().first()
+                              .where(Board.tag == tag))
+    board = result.scalars().first()
     if board is None:
         raise HTTPException(status_code=404, detail="Board not found")
     return board
