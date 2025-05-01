@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import selectinload
 from db.models import *
 from db.database import get_db
 
@@ -19,6 +19,38 @@ async def get_users(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Category))
     users = result.scalars().all()
     return users
+
+@app.get("/boardlist")
+async def get_categories_with_boards(db: AsyncSession = Depends(get_db)):
+    # Выбираем все категории с предзагрузкой досок
+    query = select(Category).options(selectinload(Category.boards)).order_by(Category.id)
+
+    result = await db.execute(query)
+    categories = result.scalars().all()
+
+    return [
+        {
+            "id": cat.id,
+            "name": cat.name,
+            "is_visible": cat.is_visible,
+            "is_nsfw": cat.is_nsfw,
+            "boards": [
+                {
+                    "id": board.id,
+                    "tag": board.tag,
+                    "name": board.name,
+                    "description": board.description,
+                    "nsfw": board.nsfw,
+                    "is_visible": board.is_visible,
+                    "is_locked": board.is_locked
+                }
+                for board in cat.boards
+                if board.is_visible  # Фильтрация невидимых досок
+            ]
+        }
+        for cat in categories
+        if cat.is_visible  # Фильтрация невидимых категорий
+    ]
 
 @app.get("/boards/")
 async def get_users(db: AsyncSession = Depends(get_db)):
