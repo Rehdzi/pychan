@@ -1,13 +1,73 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import joinedload
+from db.models import *
+from db.database import get_db
 
 app = FastAPI()
 
+# @app.post("/users/")
+# async def create_user(name: str, email: str, db: AsyncSession = Depends(get_db)):
+#     new_user = User(name=name, email=email)
+#     db.add(new_user)
+#     await db.commit()
+#     return new_user
 
-@app.get("/")
-async def root():
-    return {"message": "Hello World"}
+@app.get("/categories/")
+async def get_users(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Category))
+    users = result.scalars().all()
+    return users
+
+@app.get("/boards/")
+async def get_users(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Board))
+    boards = result.scalars().all()
+    return boards
+
+@app.get("/sfw_boards/")
+async def get_users(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Board)
+                              .where(Board.nsfw == False))
+    boards = result.scalars().all()
+    return boards
 
 
-@app.get("/hello/{name}")
-async def say_hello(name: str):
-    return {"message": f"Hello {name}"}
+#SELECT * FROM post
+# JOIN board ON post.board_id = board.id
+# WHERE board.nsfw = false
+# ORDER BY timestamp DESC LIMIT 8
+@app.get("/boards/latest/")
+async def get_users(db: AsyncSession = Depends(get_db)):
+    query = (select(Post)
+             .join(Board)
+             .where(Board.nsfw == False)
+             .where(Post.parent_id == 0)
+             .order_by(Post.timestamp.desc())
+             .limit(8)
+             )
+
+    result = await db.execute(query)
+    boards = result.scalars().all()
+    return boards
+
+@app.get("/boards/{board_id}/posts/")
+async def get_posts_by_board(
+    board_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    board = await db.get(Board, board_id)
+    if not board:
+        raise HTTPException(status_code=404, detail="Board not found")
+
+    query = (
+        select(Post)
+        .where(Post.board_id == board_id)
+        .order_by(Post.timestamp.desc())
+    )
+
+    result = await db.execute(query)
+    posts = result.scalars().all()
+
+    return posts

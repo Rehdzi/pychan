@@ -5,7 +5,28 @@ Accept: application/json
 
 ###
 
-GET http://127.0.0.1:8000/hello/User
+GET http://127.0.0.1:8000/boards/latest/
 Accept: application/json
 
 ###
+
+GET http://127.0.0.1:8000/boards/
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/sfw_boards/
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/categories/
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/boards/{{board_id}}/posts/
+Accept: application/json
+
+###
+
