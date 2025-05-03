@@ -1,10 +1,11 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, func, or_
+from sqlalchemy.orm import selectinload, aliased, joinedload
 from fastapi.middleware.cors import CORSMiddleware
 from db.models import *
 from db.database import get_db
+from util.schemas import BoardOpsResponse
 
 app = FastAPI()
 
@@ -130,3 +131,64 @@ async def get_posts_by_board(
     posts = result.scalars().all()
 
     return posts
+
+## @app.get("/thread/{post_id}")
+
+
+async def get_op_with_replies(post_id: int, db: AsyncSession = Depends(get_db)):
+    # Создаем алиасы для ответов
+    FirstReply = aliased(Post)
+    LastReply = aliased(Post)
+
+    # Подзапрос для получения ID первого и последнего ответов
+    replies_subquery = (
+        select(
+            Post.parent_id,
+            func.min(Post.id).label('first_reply_id'),
+            func.max(Post.id).label('last_reply_id')
+        )
+        .where(Post.parent_id != 0)
+        .group_by(Post.parent_id)
+        .subquery()
+    )
+
+    # Основной запрос с джойнами
+    stmt = (
+        select(
+            Post,
+            FirstReply,
+            LastReply
+        )
+        .outerjoin(
+            replies_subquery,
+            Post.id == replies_subquery.c.parent_id
+        )
+        .outerjoin(
+            FirstReply,
+            FirstReply.id == replies_subquery.c.first_reply_id
+        )
+        .outerjoin(
+            LastReply,
+            LastReply.id == replies_subquery.c.last_reply_id
+        )
+        .where(
+            Post.parent_id == 0,
+            Post.id == post_id
+        )
+        # .options(
+        #     joinedload(Post.board)  # Если нужно загрузить связанную доску
+        # )
+    )
+
+    async with db as session:
+        result = await session.execute(stmt)
+        row = result.first()
+
+    if not row:
+        return None
+
+    return {
+        "op": row[0],
+        "first_reply": row[1],
+        "last_reply": row[2]
+    }
