@@ -40,7 +40,7 @@ Accept: application/json
 
 ###
 
-GET http://127.0.0.1:8000/thread/{{post_id}}
+GET http://127.0.0.1:8000/{{tag}}/ops
 Accept: application/json
 
 ###

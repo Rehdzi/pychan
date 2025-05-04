@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload, aliased, joinedload
 from fastapi.middleware.cors import CORSMiddleware
 from db.models import *
 from db.database import get_db
-from util.schemas import BoardOpsResponse
+from util.schemas import *
 
 app = FastAPI()
 
@@ -135,12 +135,11 @@ async def get_posts_by_board(
 ## @app.get("/thread/{post_id}")
 
 
-async def get_op_with_replies(post_id: int, db: AsyncSession = Depends(get_db)):
-    # Создаем алиасы для ответов
+async def get_board_ops_with_replies(async_session: AsyncSession, board_id: int):
     FirstReply = aliased(Post)
     LastReply = aliased(Post)
 
-    # Подзапрос для получения ID первого и последнего ответов
+    # Подзапрос для агрегации ответов
     replies_subquery = (
         select(
             Post.parent_id,
@@ -173,22 +172,69 @@ async def get_op_with_replies(post_id: int, db: AsyncSession = Depends(get_db)):
         )
         .where(
             Post.parent_id == 0,
-            Post.id == post_id
+            Post.board_id == board_id
         )
-        # .options(
-        #     joinedload(Post.board)  # Если нужно загрузить связанную доску
-        # )
+        .options(
+            ## joinedload(Post.board),
+            ## joinedload(Post.image_ids)  # Если есть связь с изображениями
+        )
+        .order_by(Post.timestamp.desc())
     )
 
-    async with db as session:
-        result = await session.execute(stmt)
-        row = result.first()
+    result = await async_session.execute(stmt)
+    return result.all()
 
-    if not row:
-        return None
+@app.get("/{board_tag}/ops", response_model=BoardOpsResponse)
+async def get_board_operations(
+    board_tag: str,
+    session: AsyncSession = Depends(get_db)
+):
+    # Получение доски
+    board_query = await session.execute(
+        select(Board)
+        .where(Board.tag == board_tag)
+        .options(joinedload(Board.category)))
+    board = board_query.scalar()
 
-    return {
-        "op": row[0],
-        "first_reply": row[1],
-        "last_reply": row[2]
-    }
+    if not board:
+        raise HTTPException(status_code=404, detail="Board not found")
+    if not board.is_visible:
+        raise HTTPException(status_code=403, detail="Board is hidden")
+
+    # Получение OP-постов
+    ops_data = await get_board_ops_with_replies(session, board.id)
+
+    # Форматирование ответа
+    formatted_ops = []
+    for op, first_reply, last_reply in ops_data:
+        formatted_ops.append(BoardOpResponse(
+            op={
+                "id": op.id,
+                "title": op.title,
+                "text": op.text_,
+                "timestamp": op.timestamp,
+                "image_ids": [img.id for img in op.image_ids],
+                "board": {"tag": board.tag, "name": board.name}
+            },
+            first_reply=PostReply(
+                id=first_reply.id if first_reply else None,
+                text=first_reply.text_ if first_reply else None,
+                timestamp=first_reply.timestamp if first_reply else None
+            ) if first_reply else None,
+            last_reply=PostReply(
+                id=last_reply.id if last_reply else None,
+                text=last_reply.text_ if last_reply else None,
+                timestamp=last_reply.timestamp if last_reply else None
+            ) if last_reply else None,
+            replies_count=len(op.child_ids) if op.child_ids else 0
+        ))
+
+    return BoardOpsResponse(
+        board_info={
+            "tag": board.tag,
+            "name": board.name,
+            "description": board.description,
+            "category": board.category.name if board.category else None
+        },
+        ops=formatted_ops
+    )
