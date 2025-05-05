@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload, aliased, joinedload
@@ -238,3 +239,60 @@ async def get_board_operations(
         },
         ops=formatted_ops
     )
+
+
+@app.post("/new_thread/", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
+async def new_thread(post_data: PostCreate,
+                     db: AsyncSession = Depends(get_db)):
+    # Получаем доску по тегу
+    board_query = await db.execute(
+        select(Board)
+        .where(Board.tag == post_data.board_tag)
+    )
+    board = board_query.scalar()
+
+    if not board:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Board not found"
+        )
+
+    if not board.is_visible or board.is_locked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Board is locked or hidden"
+        )
+
+    # Создаем новый пост
+    new_post = Post(
+        board_id=board.id,
+        title=post_data.title,
+        text_=post_data.text,
+        image_ids=post_data.image_ids,
+        parent_id=0,  # Указываем что это OP-пост
+        timestamp=datetime.utcnow(),
+        is_visible=post_data.is_visible,
+        child_ids=[]
+    )
+
+    try:
+        db.add(new_post)
+        await db.commit()
+        await db.refresh(new_post)
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating post: {str(e)}"
+        )
+
+    return {
+        "id": new_post.id,
+        "board_id": new_post.board_id,
+        "title": new_post.title,
+        "text": new_post.text_,
+        "image_ids": new_post.image_ids,
+        "timestamp": new_post.timestamp,
+        "parent_id": new_post.parent_id,
+        "is_visible": new_post.is_visible
+    }

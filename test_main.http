@@ -45,3 +45,14 @@ Accept: application/json
 
 ###
 
+POST http://127.0.0.1:8000/new_thread/
+Content-Type: application/json
+
+{
+    "board_tag": "t",
+    "title": "Thready Thread",
+    "text": "**ВСЕ ОЧЕНЬ ПЛОХО**",
+    "image_ids": []
+}
+
+###
