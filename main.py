@@ -220,11 +220,13 @@ async def get_board_operations(
             first_reply=PostReply(
                 id=first_reply.id if first_reply else None,
                 text=first_reply.text_ if first_reply else None,
+                image_ids=first_reply.image_ids if first_reply else None,
                 timestamp=first_reply.timestamp if first_reply else None
             ) if first_reply else None,
             last_reply=PostReply(
                 id=last_reply.id if last_reply else None,
                 text=last_reply.text_ if last_reply else None,
+                image_ids=last_reply.image_ids if last_reply else None,
                 timestamp=last_reply.timestamp if last_reply else None
             ) if last_reply else None,
             replies_count=len(op.child_ids) if op.child_ids else 0

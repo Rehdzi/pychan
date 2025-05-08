@@ -5,6 +5,7 @@ from typing import Optional, List
 class PostReply(BaseModel):
     id: Optional[int] = None
     text: Optional[str] = None
+    image_ids: Optional[List[int]] = None
     timestamp: Optional[datetime] = None
 
 class BoardOpResponse(BaseModel):
@@ -24,6 +25,14 @@ class PostCreate(BaseModel):
     image_ids: Optional[List[int]] = Field(default_factory=list)
     is_visible: Optional[bool] = True
 
+class ImageCreate(BaseModel):
+    filename: str
+    content_type: str
+
+class ImageResponse(BaseModel):
+    id: str
+    filename: str
+    size: int
 
 class PostResponse(BaseModel):
     id: int
