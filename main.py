@@ -1,4 +1,6 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+import uuid
+
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
@@ -7,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from db.models import *
 from db.database import get_db
 from util.schemas import *
+from util.redis_config import redis_client
 
 app = FastAPI()
 
@@ -135,6 +138,13 @@ async def get_posts_by_board(
 
 ## @app.get("/thread/{post_id}")
 
+async def get_image_urls(image_ids: list[str]) -> list[str]:
+    """Генерирует URL для изображений, существующих в Redis"""
+    urls = []
+    for image_id in image_ids:
+        if redis_client.exists(f"image:{image_id}"):
+            urls.append(f"/images/{image_id}")
+    return urls
 
 async def get_board_ops_with_replies(async_session: AsyncSession, board_id: int):
     FirstReply = aliased(Post)
@@ -208,27 +218,45 @@ async def get_board_operations(
     # Форматирование ответа
     formatted_ops = []
     for op, first_reply, last_reply in ops_data:
+        # Получаем URL для OP-поста
+        op_image_urls = await get_image_urls(op.image_ids)
+
+        # Формируем ответ с URL вместо ID
+        op_data = {
+            "id": op.id,
+            "title": op.title,
+            "text": op.text_,
+            "timestamp": op.timestamp,
+            "image_urls": op_image_urls,
+            "board": {"tag": board.tag, "name": board.name}
+        }
+
+        # Обработка первого ответа
+        first_reply_data = None
+        if first_reply:
+            first_image_urls = await get_image_urls(first_reply.image_ids)
+            first_reply_data = PostReply(
+                id=first_reply.id,
+                text=first_reply.text_,
+                image_urls=first_image_urls,
+                timestamp=first_reply.timestamp
+            )
+
+        # Обработка последнего ответа
+        last_reply_data = None
+        if last_reply and last_reply.id != first_reply.id:
+            last_image_urls = await get_image_urls(last_reply.image_ids)
+            last_reply_data = PostReply(
+                id=last_reply.id,
+                text=last_reply.text_,
+                image_urls=last_image_urls,
+                timestamp=last_reply.timestamp
+            )
+
         formatted_ops.append(BoardOpResponse(
-            op={
-                "id": op.id,
-                "title": op.title,
-                "text": op.text_,
-                "timestamp": op.timestamp,
-                "image_ids": [img.id for img in op.image_ids],
-                "board": {"tag": board.tag, "name": board.name}
-            },
-            first_reply=PostReply(
-                id=first_reply.id if first_reply else None,
-                text=first_reply.text_ if first_reply else None,
-                image_ids=first_reply.image_ids if first_reply else None,
-                timestamp=first_reply.timestamp if first_reply else None
-            ) if first_reply else None,
-            last_reply=PostReply(
-                id=last_reply.id if last_reply else None,
-                text=last_reply.text_ if last_reply else None,
-                image_ids=last_reply.image_ids if last_reply else None,
-                timestamp=last_reply.timestamp if last_reply else None
-            ) if last_reply else None,
+            op=op_data,
+            first_reply=first_reply_data,
+            last_reply=last_reply_data,
             replies_count=len(op.child_ids) if op.child_ids else 0
         ))
 
@@ -244,12 +272,18 @@ async def get_board_operations(
 
 
 @app.post("/new_thread/", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
-async def new_thread(post_data: PostCreate,
-                     db: AsyncSession = Depends(get_db)):
+async def new_thread(
+        board_tag: str = Form(...),
+        title: Optional[str] = Form(None),
+        text: Optional[str] = Form(None),
+        is_visible: Optional[bool] = Form(True),
+        files: list[UploadFile] = File([]),
+        db: AsyncSession = Depends(get_db)
+):
     # Получаем доску по тегу
     board_query = await db.execute(
         select(Board)
-        .where(Board.tag == post_data.board_tag)
+        .where(Board.tag == board_tag)
     )
     board = board_query.scalar()
 
@@ -265,15 +299,50 @@ async def new_thread(post_data: PostCreate,
             detail="Board is locked or hidden"
         )
 
-    # Создаем новый пост
+    # Обрабатываем изображения
+    image_ids = []
+    for file in files:
+        if not file.content_type.startswith('image/'):
+            raise HTTPException(
+                status_code=400,
+                detail=f"File {file.filename} is not an image"
+            )
+
+        try:
+            contents = await file.read()
+            image_id = str(uuid.uuid4())
+
+            # Сохраняем в Redis
+            pipe = redis_client.pipeline()
+            pipe.hset(f"image:{image_id}", mapping={
+                "filename": file.filename,
+                "content_type": file.content_type,
+                "size": len(contents)
+            })
+            pipe.set(f"image:{image_id}:data", contents)
+            pipe.expire(f"image:{image_id}", 3600 * 24 * 7)  # TTL 1 неделя
+            pipe.execute()
+
+            # with open(file.filename, "wb") as f:
+            #     f.write(file.file.read())
+
+            image_ids.append(image_id)
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error uploading image {file.filename}: {str(e)}"
+            )
+
+    # Создаем новый пост с image_ids
     new_post = Post(
         board_id=board.id,
-        title=post_data.title,
-        text_=post_data.text,
-        image_ids=post_data.image_ids,
-        parent_id=0,  # Указываем что это OP-пост
+        title=title,
+        text_=text,
+        image_ids=image_ids,  # Используем ID из Redis
+        parent_id=0,
         timestamp=datetime.utcnow(),
-        is_visible=post_data.is_visible,
+        is_visible=is_visible,
         child_ids=[]
     )
 
@@ -282,6 +351,11 @@ async def new_thread(post_data: PostCreate,
         await db.commit()
         await db.refresh(new_post)
     except Exception as e:
+        # Откатываем загрузку изображений при ошибке
+        for image_id in image_ids:
+            redis_client.delete(f"image:{image_id}")
+            redis_client.delete(f"image:{image_id}:data")
+
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -293,7 +367,7 @@ async def new_thread(post_data: PostCreate,
         "board_id": new_post.board_id,
         "title": new_post.title,
         "text": new_post.text_,
-        "image_ids": new_post.image_ids,
+        "image_urls": new_post.image_ids,
         "timestamp": new_post.timestamp,
         "parent_id": new_post.parent_id,
         "is_visible": new_post.is_visible

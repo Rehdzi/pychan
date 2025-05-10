@@ -87,7 +87,7 @@ class Post(Base):
 
     id: Mapped[int] = mapped_column(Integer, Identity(always=True, start=1, increment=1, minvalue=1, maxvalue=2147483647, cycle=False, cache=1), primary_key=True)
     board_id: Mapped[int] = mapped_column(BigInteger)
-    image_ids: Mapped[list] = mapped_column(ARRAY(BigInteger()), server_default=text("'{}'::bigint[]"))
+    image_ids: Mapped[list] = mapped_column(ARRAY(String()), server_default=text("'{}'::character varying[]"))
     timestamp: Mapped[datetime.datetime] = mapped_column(DateTime)
     is_visible: Mapped[bool] = mapped_column(Boolean, server_default=text('true'))
     title: Mapped[Optional[str]] = mapped_column(String(150), server_default=text("''::character varying"))
