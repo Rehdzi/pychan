@@ -1,7 +1,10 @@
 import uuid
+from urllib.parse import quote
 
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form
 from datetime import datetime
+
+from fastapi.openapi.models import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload, aliased, joinedload
@@ -226,7 +229,7 @@ async def get_board_operations(
             "id": op.id,
             "title": op.title,
             "text": op.text_,
-            "timestamp": op.timestamp,
+            "timestamp": op.timestamp.isoformat(),
             "image_urls": op_image_urls,
             "board": {"tag": board.tag, "name": board.name}
         }
@@ -234,22 +237,22 @@ async def get_board_operations(
         # Обработка первого ответа
         first_reply_data = None
         if first_reply:
-            first_image_urls = await get_image_urls(first_reply.image_ids)
+            first_images = await get_image_urls(first_reply.image_ids or [])
             first_reply_data = PostReply(
                 id=first_reply.id,
                 text=first_reply.text_,
-                image_urls=first_image_urls,
+                image_urls=first_images,
                 timestamp=first_reply.timestamp
             )
 
         # Обработка последнего ответа
         last_reply_data = None
         if last_reply and last_reply.id != first_reply.id:
-            last_image_urls = await get_image_urls(last_reply.image_ids)
+            last_images = await get_image_urls(last_reply.image_ids or [])
             last_reply_data = PostReply(
                 id=last_reply.id,
                 text=last_reply.text_,
-                image_urls=last_image_urls,
+                image_urls=last_images,
                 timestamp=last_reply.timestamp
             )
 
@@ -270,6 +273,30 @@ async def get_board_operations(
         ops=formatted_ops
     )
 
+
+@app.get("/images/{image_id}")
+async def get_image(image_id: str):
+    if not redis_client.exists(f"image:{image_id}"):
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    # Получаем метаданные
+    meta = redis_client.hgetall(f"image:{image_id}")
+    content_type = meta.get(b'content_type', b'application/octet-stream').decode()
+    filename = meta.get(b'filename', b'image').decode()
+
+    # Получаем данные изображения
+    image_data = redis_client.get(f"image:{image_id}:data")
+
+    # Кодируем имя файла для заголовка
+    filename_encoded = quote(filename, safe='')
+
+    return Response(
+        content=image_data,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{filename_encoded}"
+        }
+    )
 
 @app.post("/new_thread/", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
 async def new_thread(

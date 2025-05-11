@@ -5,7 +5,7 @@ from typing import Optional, List
 class PostReply(BaseModel):
     id: Optional[int] = None
     text: Optional[str] = None
-    image_urls: List[str] = []
+    image_urls: List[str] = Field(default_factory=list)
     timestamp: Optional[datetime] = None
 
 class BoardOpResponse(BaseModel):
@@ -22,7 +22,7 @@ class PostCreate(BaseModel):
     board_tag: str = Field(..., min_length=1, max_length=5)
     title: Optional[str] = Field(None, max_length=150)
     text: Optional[str] = Field(None, max_length=450)
-    image_ids: Optional[List[str]] = Field(default_factory=list)
+    image_urls: Optional[List[str]] = Field(default_factory=list)
     is_visible: Optional[bool] = True
 
 class ImageCreate(BaseModel):
