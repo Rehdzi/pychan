@@ -6,7 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncAttrs
 import datetime
 
 class Base(AsyncAttrs, DeclarativeBase):
-    pass
+    def to_dict(self):
+        """Convert model to dictionary for JSON serialization"""
+        return {c.name: getattr(self, c.name) for c in self.__table__.columns}
 
 
 class Category(Base):
@@ -23,6 +25,11 @@ class Category(Base):
 
     board: Mapped[List['Board']] = relationship('Board', back_populates='category')
     boards = relationship("Board", back_populates="category")
+
+    def to_dict(self):
+        result = super().to_dict()
+        # Don't include relationship data by default
+        return result
 
 
 class Image(Base):
@@ -77,6 +84,13 @@ class Board(Base):
     post: Mapped[List['Post']] = relationship('Post', back_populates='board')
     category = relationship("Category", back_populates="boards")
 
+    def to_dict(self):
+        result = super().to_dict()
+        # Include the category name if available
+        if self.category:
+            result['category_name'] = self.category.name
+        return result
+
 
 class Post(Base):
     __tablename__ = 'post'
@@ -96,3 +110,64 @@ class Post(Base):
     child_ids: Mapped[Optional[list]] = mapped_column(ARRAY(Integer()), server_default=text("'{}'::integer[]"))
 
     board: Mapped['Board'] = relationship('Board', back_populates='post')
+
+    def to_dict(self):
+        result = super().to_dict()
+        # Convert datetime to ISO format string
+        if self.timestamp:
+            result['timestamp'] = self.timestamp.isoformat()
+        # Change text_ key to text for consistency
+        if 'text_' in result:
+            result['text'] = result.pop('text_')
+        # Ensure image_ids is a list
+        if 'image_ids' in result and result['image_ids'] is None:
+            result['image_ids'] = []
+        return result
+
+    @classmethod
+    async def create(cls, db, board_id, title=None, text=None, file_keys=None, is_visible=True, parent_id=0):
+        """
+        Create a new post
+        
+        Args:
+            db: Database session
+            board_id: Board ID
+            title: Post title
+            text: Post text
+            file_keys: List of S3 file keys
+            is_visible: Whether the post is visible
+            parent_id: Parent post ID (0 for original posts)
+            
+        Returns:
+            Post: The created post
+        """
+        # Ensure file_keys is a list, even if empty
+        if file_keys is None:
+            file_keys = []
+            
+        # Log the file keys for debugging
+        print(f"Creating post with file keys: {file_keys}")
+        
+        new_post = cls(
+            board_id=board_id,
+            title=title,
+            text_=text,
+            image_ids=file_keys,  # Assign file_keys to image_ids
+            timestamp=datetime.datetime.now(),
+            is_visible=is_visible,
+            parent_id=parent_id
+        )
+        
+        db.add(new_post)
+        await db.flush()  # To get the ID
+        
+        # If this is a reply, update parent's child_ids
+        if parent_id != 0:
+            parent = await db.get(cls, parent_id)
+            if parent:
+                if parent.child_ids:
+                    parent.child_ids.append(new_post.id)
+                else:
+                    parent.child_ids = [new_post.id]
+        
+        return new_post

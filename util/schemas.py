@@ -34,12 +34,19 @@ class ImageResponse(BaseModel):
     filename: str
     size: int
 
+class ImageMeta(BaseModel):
+    s3_key: str
+    filename: str
+    content_type: str
+    size: int
+    thumbnail_key: Optional[str] = None
+
 class PostResponse(BaseModel):
     id: int
     board_id: int
     title: Optional[str]
     text: Optional[str]
-    image_urls: List[str]
+    images: List[ImageMeta]
     timestamp: datetime
     parent_id: Optional[int]
     is_visible: bool
