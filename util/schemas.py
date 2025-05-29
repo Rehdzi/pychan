@@ -1,12 +1,22 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
+
+class ImageInfo(BaseModel):
+    id: str
+    url: str
+    thumbnail: Optional[str] = None
+    filename: Optional[str] = None
+    content_type: Optional[str] = None
+    size: Optional[str] = None
 
 class PostReply(BaseModel):
     id: Optional[int] = None
     text: Optional[str] = None
     image_urls: List[str] = Field(default_factory=list)
     timestamp: Optional[datetime] = None
+    image_ids: Optional[List[str]] = Field(default_factory=list)
+    images: Optional[List[ImageInfo]] = Field(default_factory=list)
 
 class BoardOpResponse(BaseModel):
     op: dict
@@ -39,7 +49,7 @@ class ImageMeta(BaseModel):
     filename: str
     content_type: str
     size: int
-    thumbnail_key: Optional[str] = None
+    thumbnail_id: Optional[str] = None
 
 class PostResponse(BaseModel):
     id: int

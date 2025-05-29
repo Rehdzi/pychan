@@ -86,9 +86,10 @@ class Board(Base):
 
     def to_dict(self):
         result = super().to_dict()
-        # Include the category name if available
-        if self.category:
-            result['category_name'] = self.category.name
+        # Include the category name if available but avoid lazy loading
+        # Don't access self.category directly to avoid lazy loading
+        if hasattr(self, '_category') and self._category is not None:
+            result['category_name'] = self._category.name
         return result
 
 

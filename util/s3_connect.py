@@ -77,7 +77,7 @@ class S3Service:
 
     async def upload_file(self, upload_file: UploadFile) -> str:
         """Upload file to Timeweb S3 storage with special handling for Timeweb compatibility"""
-        file_key = f"{uuid.uuid4()}"
+        file_key = f"media/{uuid.uuid4()}"
         
         try:
             # Create a copy of the file in memory to avoid streaming issues
@@ -176,11 +176,17 @@ class S3Service:
             import base64
             
             # Generate a unique file key
-            file_key = f"direct_{uuid.uuid4()}"
+            file_key = f"media/direct_{uuid.uuid4()}"
             
             # Read file contents
             contents = await upload_file.read()
             await upload_file.seek(0)
+            
+            # Get file size
+            content_length = len(contents)
+            if content_length == 0:
+                logger.error("Cannot upload empty file")
+                raise ValueError("File content is empty")
             
             # Create basic auth for S3
             auth = base64.b64encode(
@@ -190,20 +196,40 @@ class S3Service:
             # Create endpoint URL
             endpoint = f"{self.config['endpoint_url']}/{self.bucket_name}/{file_key}"
             
+            # Safe encode filename for metadata - protect against non-ASCII
+            safe_filename = ""
+            if upload_file.filename:
+                try:
+                    safe_filename = quote(upload_file.filename, safe='')
+                    logger.info(f"Encoded filename: {safe_filename}")
+                except Exception as encode_error:
+                    logger.error(f"Failed to encode filename: {encode_error}")
+                    # Use a simplified fallback name
+                    safe_filename = f"file_{uuid.uuid4()}"
+            
             # Determine content type
             content_type = upload_file.content_type or 'application/octet-stream'
+            
+            # Prepare headers
+            headers = {
+                'Authorization': f'Basic {auth}',
+                'Content-Type': content_type,
+                'Content-Length': str(content_length),
+            }
+            
+            # Add metadata only if we have a filename
+            if safe_filename:
+                headers['x-amz-meta-original-filename'] = safe_filename
+            
+            # Log upload attempt
+            logger.info(f"Attempting direct HTTP PUT to {endpoint} with content type {content_type} and size {content_length}")
             
             # Upload using direct HTTP PUT
             async with aiohttp.ClientSession() as session:
                 async with session.put(
                     endpoint,
                     data=contents,
-                    headers={
-                        'Authorization': f'Basic {auth}',
-                        'Content-Type': content_type,
-                        'Content-Length': str(len(contents)),
-                        'x-amz-meta-original-filename': quote(upload_file.filename)
-                    }
+                    headers=headers
                 ) as resp:
                     if resp.status < 300:
                         logger.info(f"Direct HTTP upload successful for file {upload_file.filename}")
@@ -211,6 +237,7 @@ class S3Service:
                     else:
                         error_text = await resp.text()
                         logger.error(f"Direct HTTP upload failed with status {resp.status}: {error_text}")
+                        logger.error(f"Request headers: {headers}")
                         raise TimewebS3Error(f"Direct HTTP upload failed with status {resp.status}")
                         
         except Exception as e:
@@ -242,14 +269,40 @@ class S3Service:
                     Bucket=self.bucket_name,
                     Key=file_key
                 )
-                metadata = response["Metadata"]
+                
+                # Extract the metadata
+                metadata = response.get("Metadata", {})
+                
+                # Get content type from response
+                content_type = response.get("ContentType", "application/octet-stream")
+                
+                # Get content length from response
+                content_length = response.get("ContentLength", 0)
+                
+                # In case original-filename isn't in metadata
+                filename = ""
+                if "original-filename" in metadata:
+                    try:
+                        filename = unquote(metadata["original-filename"])
+                    except Exception as decode_error:
+                        logger.error(f"Error decoding filename: {decode_error}")
+                        filename = metadata["original-filename"]
+                        
+                # Get last modified date if available
+                last_modified = response.get("LastModified", None)
+                
+                # Log the raw response for debugging
+                logger.info(f"S3 metadata response for {file_key}: Content-Type: {content_type}, Content-Length: {content_length}")
+                
                 return {
-                    "filename": unquote(metadata.get("original-filename", "")),
-                    "size": int(metadata.get("content-length", 0)),
-                    "content_type": response["ContentType"],
-                    "last_modified": response["LastModified"]
+                    "filename": filename,
+                    "size": content_length,
+                    "content_type": content_type,
+                    "last_modified": last_modified
                 }
             except Exception as e:
+                logger.error(f"Metadata fetch failed for {file_key}: {str(e)}")
+                logger.error(traceback.format_exc())
                 raise TimewebS3Error(f"Metadata fetch failed: {str(e)}")
 
     async def delete_file(self, file_key: str) -> None:

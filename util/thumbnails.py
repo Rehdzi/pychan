@@ -7,14 +7,14 @@ import uuid
 import base64
 import aiohttp
 from urllib.parse import quote
+import traceback
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 async def generate_thumbnail(file: UploadFile, s3_service, file_id: str, size: tuple = (200, 200)) -> str:
     """
-    Generate a thumbnail for an image file and upload it using a direct HTTP approach,
-    avoiding S3 signing issues.
+    Generate a thumbnail for an image file and store it directly in Redis.
     
     Args:
         file: The uploaded file
@@ -23,9 +23,11 @@ async def generate_thumbnail(file: UploadFile, s3_service, file_id: str, size: t
         size: Thumbnail dimensions
         
     Returns:
-        str: The thumbnail file key in S3, or None if generation fails
+        str: The thumbnail ID in Redis, or None if generation fails
     """
     try:
+        from util.redis_config import redis_client
+        
         # Read the file contents
         contents = await file.read()
         
@@ -38,55 +40,50 @@ async def generate_thumbnail(file: UploadFile, s3_service, file_id: str, size: t
             img.save(output, format=format, quality=85)
             output.seek(0)
         
-        # Generate a unique thumbnail key
-        thumb_key = f"thumb_{uuid.uuid4()}"
-        
-        # Get content from BytesIO
+        # Get binary thumbnail data
         thumb_content = output.getvalue()
         
         # Determine content type
         content_type = f"image/{format.lower()}" if format != 'JPEG' else 'image/jpeg'
         
-        # Try using direct HTTP PUT instead of S3 client
-        # This avoids the content hash validation issues
-        try:
-            # Create auth string
-            auth = base64.b64encode(
-                f"{s3_service.config['aws_access_key_id']}:{s3_service.config['aws_secret_access_key']}".encode()
-            ).decode()
-            
-            # Create endpoint URL
-            endpoint = f"{s3_service.config['endpoint_url']}/{s3_service.bucket_name}/{thumb_key}"
-            
-            # Upload using direct HTTP request
-            async with aiohttp.ClientSession() as session:
-                async with session.put(
-                    endpoint,
-                    data=thumb_content,
-                    headers={
-                        'Authorization': f'Basic {auth}',
-                        'Content-Type': content_type,
-                        'Content-Length': str(len(thumb_content)),
-                        'x-amz-meta-original-filename': quote(f"{file.filename}_thumb")
-                    }
-                ) as resp:
-                    if resp.status < 300:
-                        logger.info(f"Successfully uploaded thumbnail with key {thumb_key}")
-                    else:
-                        error_text = await resp.text()
-                        logger.error(f"Direct thumbnail upload failed with status {resp.status}: {error_text}")
-                        return None
-        except Exception as direct_error:
-            logger.error(f"Direct HTTP upload for thumbnail failed: {str(direct_error)}")
-            return None
-            
+        # Generate a unique ID for the thumbnail
+        thumb_id = f"thumb_{uuid.uuid4()}"
+        
+        # Store thumbnail directly in Redis
+        logger.info(f"Storing thumbnail directly in Redis with key: thumb:{thumb_id}")
+        
+        # Store the actual binary data
+        await redis_client.set(f"thumb:{thumb_id}", thumb_content)
+        
+        # Store metadata separately
+        await redis_client.hset(
+            f"thumb_meta:{thumb_id}", 
+            mapping={
+                "content_type": content_type,
+                "size": str(len(thumb_content)),
+                "original_file": file.filename,
+                "width": str(img.width),
+                "height": str(img.height)
+            }
+        )
+        
+        # Set expiration for both keys (30 days)
+        await redis_client.expire(f"thumb:{thumb_id}", 60*60*24*30)
+        await redis_client.expire(f"thumb_meta:{thumb_id}", 60*60*24*30)
+        
+        logger.info(f"Successfully stored thumbnail in Redis with ID: {thumb_id}")
+        
         # Reset original file's position
         await file.seek(0)
         
-        return thumb_key
+        return thumb_id
         
     except Exception as e:
         logger.error(f"Error generating thumbnail: {str(e)}")
+        logger.error(traceback.format_exc())
         # Return None instead of raising, as thumbnail is optional
-        await file.seek(0)
+        try:
+            await file.seek(0)
+        except:
+            pass
         return None
