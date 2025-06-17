@@ -1,0 +1,42 @@
+[project]
+name = "pychan"
+version = "0.1.0"
+description = "A FastAPI imageboard backend"
+authors = [
+    {name = "Rehdzi",email = "5crkurwa@gmail.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi (>=0.115.12,<0.116.0)",
+    "aiobotocore (>=2.23.0,<3.0.0)",
+    "aiofiles (>=24.1.0,<25.0.0)",
+    "alembic (>=1.16.2,<2.0.0)",
+    "greenlet (>=3.2.3,<4.0.0)",
+    "hiredis (>=3.2.1,<4.0.0)",
+    "httptools (>=0.6.4,<0.7.0)",
+    "httpx (>=0.28.1,<0.29.0)",
+    "pillow (>=11.2.1,<12.0.0)",
+    "psycopg2-binary (>=2.9.10,<3.0.0)",
+    "python-dotenv (>=1.1.0,<2.0.0)",
+    "python-multipart (>=0.0.20,<0.0.21)",
+    "pyyaml (>=6.0.2,<7.0.0)",
+    "redis (>=6.2.0,<7.0.0)",
+    "setuptools (>=80.9.0,<81.0.0)",
+    "uvicorn (>=0.34.3,<0.35.0)",
+    "uvloop (>=0.21.0,<0.22.0)",
+    "watchfiles (>=1.1.0,<2.0.0)",
+    "websockets (>=15.0.1,<16.0.0)",
+    "wheel (>=0.45.1,<0.46.0)",
+    "zstandard (>=0.23.0,<0.24.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+sqlacodegen = "^3.0.0"
+
