@@ -1,35 +1,29 @@
 import imghdr
-import os
-import uuid
 import json
-import traceback
 import logging
-from typing import Optional, List, Dict, Any, Union
-from urllib.parse import quote
+import os
+import traceback
+import uuid
+from functools import lru_cache
 from io import BytesIO
 
-from aiohttp import ClientError
+from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form, Request
-from fastapi.responses import JSONResponse, Response
-from datetime import datetime
-
-from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_, text as sa_text
-from sqlalchemy.orm import selectinload, aliased, joinedload
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import RedirectResponse
+from fastapi.responses import JSONResponse, Response
+from redis.asyncio import Redis
+from sqlalchemy import select, text as sa_text
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload, joinedload
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import RedirectResponse
 
-from db.models import *
 from db.database import get_db
+from db.models import *
 from util.s3_connect import S3Service
 from util.schemas import *
-from util.redis_config import redis_client
 from util.thumbnails import generate_thumbnail
-from functools import lru_cache
 
-from dotenv import load_dotenv
 load_dotenv()
 
 # Configure logging
@@ -1213,8 +1207,8 @@ async def debug_post(
             pipe = redis.pipeline()
             for image_id in post_orm.image_ids:
                 if image_id:
-                    pipe.exists(f"file:{image_id}")
-                    pipe.hgetall(f"file:{image_id}")
+                    await pipe.exists(f"file:{image_id}")
+                    await pipe.hgetall(f"file:{image_id}")
             
             # Execute the pipeline
             redis_results = await pipe.execute()
@@ -1302,8 +1296,8 @@ async def get_image_data(image_ids: list[str]) -> list[dict]:
         for image_id in image_ids:
             if image_id:
                 # Always look up by the original image key
-                pipe.exists(f"file:{image_id}")
-                pipe.hgetall(f"file:{image_id}")
+                await pipe.exists(f"file:{image_id}")
+                await pipe.hgetall(f"file:{image_id}")
         
         # Execute the pipeline
         results = await pipe.execute()
@@ -1485,3 +1479,74 @@ async def get_thumbnail(
         logger.error(f"Error serving thumbnail {thumb_id}: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error retrieving thumbnail: {str(e)}")
+
+@app.get("/thread/{op_id}", response_model=dict)
+async def get_thread_by_op(
+    op_id: int,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis)
+):
+    try:
+        # Try to get from cache first
+        cache_key = f"cache:thread:{op_id}"
+        cached = await redis.get(cache_key)
+        if cached:
+            return json.loads(cached)
+
+        # Get the OP post
+        op_query = select(Post).where(
+            Post.id == op_id,
+            Post.parent_id == 0,  # Ensure it's an OP post
+            Post.is_visible == True
+        )
+        op_result = await db.execute(op_query)
+        op_post = op_result.scalar_one_or_none()
+
+        if not op_post:
+            raise HTTPException(
+                status_code=404,
+                detail="Thread not found or is not visible"
+            )
+
+        # Get all replies
+        replies_query = select(Post).where(
+            Post.parent_id == op_id,
+            Post.is_visible == True
+        ).order_by(Post.timestamp)
+        replies_result = await db.execute(replies_query)
+        replies = replies_result.scalars().all()
+
+        # Get image data for OP and replies
+        all_image_ids = op_post.image_ids.copy()
+        for reply in replies:
+            all_image_ids.extend(reply.image_ids)
+
+        # Get image data
+        image_data = await get_image_data(all_image_ids)
+
+        # Construct response
+        response = {
+            "op": {
+                **op_post.to_dict(),
+                "images": [img for img in image_data if img["id"] in op_post.image_ids]
+            },
+            "replies": [
+                {
+                    **reply.to_dict(),
+                    "images": [img for img in image_data if img["id"] in reply.image_ids]
+                }
+                for reply in replies
+            ]
+        }
+
+        # Cache the response
+        await redis.set(cache_key, json.dumps(response), ex=CACHE_TTL)
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error in get_thread_by_op: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving thread: {str(e)}"
+        )

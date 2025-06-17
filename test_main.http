@@ -56,3 +56,8 @@ Content-Type: application/json
 }
 
 ###
+
+GET http://127.0.0.1:8000/thread/46
+Accept: application/json
+
+###
