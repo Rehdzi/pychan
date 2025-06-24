@@ -114,16 +114,18 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
             )
 
 
-app = FastAPI(title="Image Board API", version="1.0.0")
+app = FastAPI(title="PyChan API", version="1.0.0")
 
 # Add middleware
 app.add_middleware(ErrorLoggingMiddleware)
 
 origins = [
-    "http://127.0.0.1:3000",
+    "http://127.0.0.1:4173",
     "http://127.0.0.1:8000",
-    "http://localhost:3000",
+    "http://localhost:4173",
     "http://localhost:8000",
+    "http://0.0.0.0:4173",
+    "http://0.0.0.0:8000",
 ]
 
 app.add_middleware(
@@ -195,6 +197,9 @@ async def get_redis() -> Redis:
 # Cache for frequently accessed data
 CACHE_TTL = 60 * 5  # 5 minutes
 
+@app.get("/health")
+async def health_check():
+    return {"status": "OK"}
 
 @app.get("/categories/")
 async def get_categories(db: AsyncSession = Depends(get_db), redis: Redis = Depends(get_redis)):

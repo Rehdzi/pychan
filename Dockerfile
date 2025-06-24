@@ -1,6 +1,12 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bullseye
 
-WORKDIR /app
+WORKDIR /api
+
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 RUN pip install poetry
 
