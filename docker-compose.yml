@@ -47,7 +47,7 @@ services:
       POSTGRES_PASSWORD: SoundsLikeShit
       POSTGRES_DB: pychan
     ports:
-      - "5432:5432"
+      - "5430:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
