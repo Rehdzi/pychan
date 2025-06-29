@@ -22,64 +22,18 @@ from sqlalchemy.orm import selectinload, joinedload
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import RedirectResponse
 
-from db.database import get_db
-from db.models import *
-from util.s3_connect import S3Service
-from util.schemas import *
-from util.thumbnails import generate_thumbnail
+from pychan.db.database import get_db
+from pychan.db.models import *
+
+from pychan.routes import boards
+from pychan.util.s3_connect import S3Service
+from pychan.util.schemas import *
+from pychan.util.thumbnails import generate_thumbnail
+from pychan.util.logging import setup_logging
 
 load_dotenv()
+setup_logging()
 
-# Remove existing handlers
-for handler in logging.root.handlers[:]:
-    logging.root.removeHandler(handler)
-
-
-class InterceptHandler(logging.Handler):
-    def emit(self, record):
-        # Get corresponding Loguru level
-        try:
-            level = logger.level(record.levelname).name
-        except ValueError:
-            level = record.levelno
-
-        # Find caller to get correct stack depth
-        frame, depth = logging.currentframe(), 2
-        while frame.f_back and frame.f_code.co_filename == logging.__file__:
-            frame = frame.f_back
-            depth += 1
-
-        logger.opt(depth=depth, exception=record.exc_info).log(
-            level, record.getMessage()
-        )
-
-
-# Intercept standard logging
-logging.basicConfig(handlers=[InterceptHandler()], level=logging.INFO)
-
-logger.add(
-    "logs/app.log",
-    rotation="50 MB",
-    compression="zip",
-    level="INFO",
-    backtrace=True,
-    diagnose=True,
-)
-
-loggers = (
-    "uvicorn",
-    "uvicorn.access",
-    "uvicorn.error",
-    "fastapi",
-    "sqlalchemy",
-    "asyncio",
-    "starlette",
-)
-
-for logger_name in loggers:
-    logging_logger = logging.getLogger(logger_name)
-    logging_logger.handlers = []
-    logging_logger.propagate = True
 
 # Environment variables with default values
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
@@ -136,6 +90,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(boards.main.router)
 
 # Startup event to test connections
 @app.on_event("startup")
@@ -186,14 +141,6 @@ async def get_s3() -> S3Service:
 # Redis connection pool to avoid creating new connections
 _redis_pool = None
 
-
-async def get_redis() -> Redis:
-    global _redis_pool
-    if _redis_pool is None:
-        _redis_pool = Redis.from_url(REDIS_URL, decode_responses=True)
-    return _redis_pool
-
-
 # Cache for frequently accessed data
 CACHE_TTL = 60 * 5  # 5 minutes
 
@@ -222,243 +169,10 @@ async def get_categories(db: AsyncSession = Depends(get_db), redis: Redis = Depe
         logger.error(f"Error in get_categories: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-
-@app.get("/boardlist")
-async def get_categories_with_boards(
-        db: AsyncSession = Depends(get_db),
-        redis: Redis = Depends(get_redis)
-):
-    try:
-        # Try to get from cache first
-        cached = await redis.get("cache:boardlist")
-        if cached:
-            try:
-                return json.loads(cached)
-            except json.JSONDecodeError:
-                logger.warning("Failed to decode cached boardlist data")
-
-        # If not in cache, query database with explicit eager loading
-        # This avoids lazy loading issues by loading everything at once
-        query = select(Category).options(
-            selectinload(Category.boards)
-        ).order_by(Category.id)
-
-        result = await db.execute(query)
-        categories = result.scalars().all()
-
-        # Manually construct the response without relying on lazy loading
-        response = []
-        for cat in categories:
-            # Skip hidden categories
-            if not cat.is_visible:
-                continue
-
-            # Only include visible boards
-            visible_boards = []
-            for board in cat.boards:
-                if board.is_visible:
-                    visible_boards.append({
-                        "id": board.id,
-                        "tag": board.tag,
-                        "name": board.name,
-                        "description": board.description,
-                        "nsfw": board.nsfw,
-                        "is_visible": board.is_visible,
-                        "is_locked": board.is_locked
-                    })
-
-            response.append({
-                "id": cat.id,
-                "name": cat.name,
-                "is_visible": cat.is_visible,
-                "is_nsfw": cat.is_nsfw,
-                "boards": visible_boards
-            })
-
-        # Cache the result
-        await redis.set("cache:boardlist", json.dumps(response), ex=CACHE_TTL)
-
-        return response
-    except Exception as e:
-        logger.error(f"Error in get_categories_with_boards: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-
-# Combine these two endpoints into one with a query parameter
-@app.get("/boards/")
-async def get_boards(
-        sfw_only: bool = False,
-        db: AsyncSession = Depends(get_db),
-        redis: Redis = Depends(get_redis)
-):
-    """
-    Get all boards or only SFW boards based on the parameter.
-    Using a more direct approach to avoid greenlet issues.
-    """
-    try:
-        # Define cache key
-        cache_key = "cache:boards:sfw" if sfw_only else "cache:boards:all"
-
-        # Try cache first, with direct conversion
-        cached_data = None
-        cached = await redis.get(cache_key)
-        if cached:
-            try:
-                cached_data = json.loads(cached)
-                return cached_data
-            except json.JSONDecodeError:
-                # Continue to DB query if cache is invalid
-                pass
-
-        # Direct DB query with connection management
-        async with db.begin():
-            # Build query
-            if sfw_only:
-                stmt = sa_text("SELECT * FROM board WHERE nsfw = false")
-            else:
-                stmt = sa_text("SELECT * FROM board")
-
-            # Use raw SQL to avoid SQLAlchemy greenlet issues
-            result = await db.execute(stmt)
-            rows = result.all()
-
-            # Manual mapping to dictionaries
-            boards_data = []
-            for row in rows:
-                board_dict = {}
-                for key, value in row._mapping.items():
-                    if isinstance(value, datetime):
-                        board_dict[key] = value.isoformat()
-                    else:
-                        board_dict[key] = value
-                boards_data.append(board_dict)
-
-        # Cache with direct JSON
-        if boards_data:
-            json_data = json.dumps(boards_data)
-            await redis.set(cache_key, json_data, ex=CACHE_TTL)
-
-        return boards_data
-
-    except Exception as e:
-        logger.error(f"Error in get_boards: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-
-# Replace the sfw_boards endpoint to avoid dependency on the main endpoint
-@app.get("/sfw_boards/", include_in_schema=False)
-async def get_sfw_boards(
-        db: AsyncSession = Depends(get_db),
-        redis: Redis = Depends(get_redis)
-):
-    """
-    Get only SFW boards using a direct SQL approach.
-    """
-    try:
-        # Define cache key
-        cache_key = "cache:boards:sfw"
-
-        # Try cache first
-        cached = await redis.get(cache_key)
-        if cached:
-            try:
-                return json.loads(cached)
-            except json.JSONDecodeError:
-                pass
-
-        # Direct DB query with explicit connection management
-        async with db.begin():
-            # Use raw SQL to avoid SQLAlchemy ORM greenlet issues
-            stmt = sa_text("SELECT * FROM board WHERE nsfw = false")
-            result = await db.execute(stmt)
-            rows = result.all()
-
-            # Manual mapping
-            boards_data = []
-            for row in rows:
-                board_dict = {}
-                for key, value in row._mapping.items():
-                    if isinstance(value, datetime):
-                        board_dict[key] = value.isoformat()
-                    else:
-                        board_dict[key] = value
-                boards_data.append(board_dict)
-
-        # Cache results
-        if boards_data:
-            json_data = json.dumps(boards_data)
-            await redis.set(cache_key, json_data, ex=CACHE_TTL)
-
-        return boards_data
-
-    except Exception as e:
-        logger.error(f"Error in get_sfw_boards: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-
-@app.get("/{tag}")
-async def get_board(
-        tag: str,
-        db: AsyncSession = Depends(get_db)
-):
-    """Get a specific board by its tag."""
-    try:
-        # Query for board with explicit awaits and eager loading of relationships
-        # Use joinedload to load the category relationship upfront
-        query = select(Board).options(joinedload(Board.category)).where(Board.tag == tag)
-        result = await db.execute(query)
-        board = result.scalar_one_or_none()
-
-        if not board:
-            raise HTTPException(status_code=404, detail="Board not found")
-
-        # Convert to dict without relying on lazy loading
-        board_dict = {
-            "id": board.id,
-            "tag": board.tag,
-            "name": board.name,
-            "description": board.description,
-            "nsfw": board.nsfw,
-            "is_visible": board.is_visible,
-            "is_locked": board.is_locked,
-            "category_id": board.category_id,
-            # Include category info if available
-            "category": {
-                "id": board.category.id,
-                "name": board.category.name
-            } if board.category else None
-        }
-
-        return board_dict
-
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        logger.error(f"Error in get_board: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-
 # SELECT * FROM post
 # JOIN board ON post.board_id = board.id
 # WHERE board.nsfw = false
 # ORDER BY timestamp DESC LIMIT 8
-@app.get("/boards/latest/")
-async def get_users(db: AsyncSession = Depends(get_db)):
-    query = (select(Post)
-             .join(Board)
-             .where(Board.nsfw == False)
-             .where(Post.parent_id == 0)
-             .order_by(Post.timestamp.desc())
-             .limit(8)
-             )
-
-    result = await db.execute(query)
-    boards = result.scalars().all()
-    return boards
 
 
 @app.get("/boards/{board_id}/posts/")

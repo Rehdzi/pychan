@@ -1,12 +1,8 @@
 from PIL import Image
 from io import BytesIO
 from fastapi import UploadFile
-import os
 import logging
 import uuid
-import base64
-import aiohttp
-from urllib.parse import quote
 import traceback
 
 # Configure logging
@@ -26,7 +22,7 @@ async def generate_thumbnail(file: UploadFile, s3_service, file_id: str, size: t
         str: The thumbnail ID in Redis, or None if generation fails
     """
     try:
-        from util.redis_config import redis_client
+        from pychan.util.redis_config import redis_client
         
         # Read the file contents
         contents = await file.read()

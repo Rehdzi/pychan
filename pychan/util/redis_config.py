@@ -23,6 +23,12 @@ redis_client = redis.Redis.from_url(
     health_check_interval=30  # Seconds between health checks
 )
 
+async def get_redis() -> redis.Redis:
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+    return _redis_pool
+
 # Test connection at startup
 async def test_redis_connection():
     try:
