@@ -5,6 +5,7 @@ import os
 import traceback
 import uuid
 import sys
+from typing import Annotated
 
 import uvicorn
 from loguru import logger
@@ -22,10 +23,12 @@ from sqlalchemy.orm import selectinload, joinedload
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import RedirectResponse
 
-from pychan.db.database import get_db
+from pychan import routes
+from pychan.db.database import get_db, SessionDep
 from pychan.db.models import *
 
-from pychan.routes import boards
+from pychan.routes.boards import endpoints
+from pychan.util.redis_config import get_redis
 from pychan.util.s3_connect import S3Service
 from pychan.util.schemas import *
 from pychan.util.thumbnails import generate_thumbnail
@@ -68,7 +71,7 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
             )
 
 
-app = FastAPI(title="PyChan API", version="1.0.0")
+app = FastAPI(title="PyChan API", version="0.2a")
 
 # Add middleware
 app.add_middleware(ErrorLoggingMiddleware)
@@ -90,13 +93,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(boards.main.router)
+app.include_router(endpoints.router)
 
 # Startup event to test connections
 @app.on_event("startup")
 async def startup_event():
     # Test Redis connection
-    from util.redis_config import test_redis_connection
+    from pychan.util.redis_config import test_redis_connection
     await test_redis_connection()
 
     # Test S3 connection
@@ -138,6 +141,7 @@ async def get_s3() -> S3Service:
     return get_s3_service()
 
 
+
 # Redis connection pool to avoid creating new connections
 _redis_pool = None
 
@@ -149,7 +153,7 @@ async def health_check():
     return {"status": "OK"}
 
 @app.get("/categories/")
-async def get_categories(db: AsyncSession = Depends(get_db), redis: Redis = Depends(get_redis)):
+async def get_categories(db: SessionDep, redis: Redis = Depends(get_redis)):
     try:
         # Try to get from cache first
         cached = await redis.get("cache:categories")

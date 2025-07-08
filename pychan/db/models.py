@@ -1,9 +1,13 @@
 from typing import List, Optional
 
-from sqlalchemy import ARRAY, BigInteger, Boolean, DateTime, ForeignKeyConstraint, Identity, Integer, PrimaryKeyConstraint, String, UniqueConstraint, text
+from sqlalchemy import ARRAY, BigInteger, Boolean, DateTime, ForeignKeyConstraint, Identity, Integer, \
+    PrimaryKeyConstraint, String, UniqueConstraint, text, ForeignKey
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import AsyncAttrs
 import datetime
+
+from pychan.schemas.board import BoardSchema
+
 
 class Base(AsyncAttrs, DeclarativeBase):
     def to_dict(self):
@@ -73,7 +77,7 @@ class Board(Base):
 
     id: Mapped[int] = mapped_column(Integer, Identity(always=True, start=1, increment=1, minvalue=1, maxvalue=2147483647, cycle=False, cache=1), primary_key=True)
     tag: Mapped[str] = mapped_column(String(5))
-    category_id: Mapped[int] = mapped_column(Integer, server_default=text('1'))
+    category_id: Mapped[int] = mapped_column(ForeignKey("category.id"), server_default=text('1'))
     nsfw: Mapped[bool] = mapped_column(Boolean, server_default=text('false'))
     is_visible: Mapped[bool] = mapped_column(Boolean, server_default=text('true'))
     is_locked: Mapped[bool] = mapped_column(Boolean, server_default=text('false'))
@@ -82,15 +86,27 @@ class Board(Base):
 
     category: Mapped['Category'] = relationship('Category', back_populates='board')
     post: Mapped[List['Post']] = relationship('Post', back_populates='board')
-    category = relationship("Category", back_populates="boards")
+    # category = relationship("Category", back_populates="boards")
 
-    def to_dict(self):
-        result = super().to_dict()
-        # Include the category name if available but avoid lazy loading
-        # Don't access self.category directly to avoid lazy loading
-        if hasattr(self, '_category') and self._category is not None:
-            result['category_name'] = self._category.name
-        return result
+    def to_read_model(self) -> BoardSchema:
+        return BoardSchema(
+            id=self.id,
+            tag=self.tag,
+            category_id=self.category_id,
+            nsfw=self.nsfw,
+            is_visible=self.is_visible,
+            is_locked=self.is_locked,
+            name=self.name,
+            description=self.description
+        )
+
+    # def to_dict(self):
+    #     result = super().to_dict()
+    #     # Include the category name if available but avoid lazy loading
+    #     # Don't access self.category directly to avoid lazy loading
+    #     if hasattr(self, '_category') and self._category is not None:
+    #         result['category_name'] = self._category.name
+    #     return result
 
 
 class Post(Base):
@@ -101,14 +117,14 @@ class Post(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, Identity(always=True, start=1, increment=1, minvalue=1, maxvalue=2147483647, cycle=False, cache=1), primary_key=True)
-    board_id: Mapped[int] = mapped_column(BigInteger)
+    board_id: Mapped[int] = mapped_column(ForeignKey("board.id"))
     image_ids: Mapped[list] = mapped_column(ARRAY(String()), server_default=text("'{}'::character varying[]"))
-    timestamp: Mapped[datetime.datetime] = mapped_column(DateTime)
+    timestamp: Mapped[datetime.datetime] = mapped_column(DateTime, index=True)
     is_visible: Mapped[bool] = mapped_column(Boolean, server_default=text('true'))
     title: Mapped[Optional[str]] = mapped_column(String(150), server_default=text("''::character varying"))
-    parent_id: Mapped[Optional[int]] = mapped_column(BigInteger, server_default=text("'0'::bigint"))
-    text_: Mapped[Optional[str]] = mapped_column('text', String(450))
-    child_ids: Mapped[Optional[list]] = mapped_column(ARRAY(Integer()), server_default=text("'{}'::integer[]"))
+    parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("post.id"), server_default=text("'0'::integer"), index=True)
+    text: Mapped[Optional[str]] = mapped_column('text', String(450))
+    child_ids: Mapped[Optional[list]] = mapped_column(ARRAY(Integer()))
 
     board: Mapped['Board'] = relationship('Board', back_populates='post')
 

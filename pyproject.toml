@@ -1,6 +1,6 @@
 [project]
 name = "pychan"
-version = "0.1.0"
+version = "0.2a"
 description = "A FastAPI imageboard backend"
 authors = [
     {name = "Rehdzi",email = "5crkurwa@gmail.com"}

@@ -8,19 +8,46 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
 
-from pychan.db.database import get_db
+from pychan.db.database import get_db, SessionDep
 from pychan.db.models import Category, Board, Post
+from pychan.repos.boards import BoardsRepository
+from pychan.schemas.board import BoardSchema, BoardAddSchema
 from pychan.util.redis_config import get_redis
 
 router = APIRouter(
     prefix="/boards",
-    tags=["boards"],
+    tags=["Boards"],
 )
 
+
+@router.post("/add")
+async def add_new_board(board: BoardAddSchema):
+    board_dict = board.model_dump()
+    board_id = await BoardsRepository().add_one(board_dict)
+    logger.info(f"Created board with id {board_id}")
+    return {"board_id": board_id}
+
+
+@router.get("/full_list")
+async def get_all_boards():
+    res = await BoardsRepository().find_all()
+    return res
+
 @router.get("/list")
+async def get_filtered_boards(nsfw: bool = True, is_visible: bool = True):
+    res = await BoardsRepository().find_with_filters(nsfw, is_visible)
+    return res
+
+@router.get("/{tag}")
+async def get_board(tag: str):
+    res = await BoardsRepository().find_by_tag(tag)
+    return res
+
+
+@router.get("/depr/list")
 async def get_categories_with_boards(
         ttl: int,
-        db: AsyncSession = Depends(get_db),
+        db: SessionDep,
         redis: Redis = Depends(get_redis),
 ):
     try:
@@ -80,47 +107,47 @@ async def get_categories_with_boards(
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 
-@router.get("/{tag}")
-async def get_board(
-        tag: str,
-        db: AsyncSession = Depends(get_db)
-):
-    """Get a specific board by its tag."""
-    try:
-        # Query for board with explicit awaits and eager loading of relationships
-        # Use joinedload to load the category relationship upfront
-        query = select(Board).options(joinedload(Board.category)).where(Board.tag == tag)
-        result = await db.execute(query)
-        board = result.scalar_one_or_none()
-
-        if not board:
-            raise HTTPException(status_code=404, detail="Board not found")
-
-        # Convert to dict without relying on lazy loading
-        board_dict = {
-            "id": board.id,
-            "tag": board.tag,
-            "name": board.name,
-            "description": board.description,
-            "nsfw": board.nsfw,
-            "is_visible": board.is_visible,
-            "is_locked": board.is_locked,
-            "category_id": board.category_id,
-            # Include category info if available
-            "category": {
-                "id": board.category.id,
-                "name": board.category.name
-            } if board.category else None
-        }
-
-        return board_dict
-
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        logger.error(f"Error in get_board: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+# @router.get("/{tag}")
+# async def get_board(
+#         tag: str,
+#         db: SessionDep
+# ):
+#     """Get a specific board by its tag."""
+#     try:
+#         # Query for board with explicit awaits and eager loading of relationships
+#         # Use joinedload to load the category relationship upfront
+#         query = select(Board).options(joinedload(Board.category)).where(Board.tag == tag)
+#         result = await db.execute(query)
+#         board = result.scalar_one_or_none()
+#
+#         if not board:
+#             raise HTTPException(status_code=404, detail="Board not found")
+#
+#         # Convert to dict without relying on lazy loading
+#         board_dict = {
+#             "id": board.id,
+#             "tag": board.tag,
+#             "name": board.name,
+#             "description": board.description,
+#             "nsfw": board.nsfw,
+#             "is_visible": board.is_visible,
+#             "is_locked": board.is_locked,
+#             "category_id": board.category_id,
+#             # Include category info if available
+#             "category": {
+#                 "id": board.category.id,
+#                 "name": board.category.name
+#             } if board.category else None
+#         }
+#
+#         return board_dict
+#
+#     except Exception as e:
+#         if isinstance(e, HTTPException):
+#             raise e
+#         logger.error(f"Error in get_board: {str(e)}")
+#         logger.error(traceback.format_exc())
+#         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.get("/latest")
 async def get_users(db: AsyncSession = Depends(get_db)):
