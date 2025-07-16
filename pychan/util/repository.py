@@ -6,6 +6,7 @@ from pychan.db.database import new_session
 
 
 class AbstractRepository(ABC):
+    """Abstract base class for repository pattern."""
     @abstractmethod
     async def add_one(self):
         raise NotImplementedError
@@ -16,6 +17,7 @@ class AbstractRepository(ABC):
 
 
 class SQLAlchemyRepository(AbstractRepository):
+    """SQLAlchemy implementation of the repository pattern."""
     model = None
 
     async def add_one(self, data: dict) -> int:

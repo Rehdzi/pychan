@@ -1,12 +1,13 @@
 from typing import List, Optional
 
 from sqlalchemy import ARRAY, BigInteger, Boolean, DateTime, ForeignKeyConstraint, Identity, Integer, \
-    PrimaryKeyConstraint, String, UniqueConstraint, text, ForeignKey
+    PrimaryKeyConstraint, String, UniqueConstraint, text, ForeignKey, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import AsyncAttrs
 import datetime
 
 from pychan.schemas.board import BoardSchema
+from pychan.schemas.post import PostSchema
 
 
 class Base(AsyncAttrs, DeclarativeBase):
@@ -97,7 +98,7 @@ class Board(Base):
             is_visible=self.is_visible,
             is_locked=self.is_locked,
             name=self.name,
-            description=self.description
+            description=self.description or ""
         )
 
     # def to_dict(self):
@@ -119,32 +120,50 @@ class Post(Base):
     id: Mapped[int] = mapped_column(Integer, Identity(always=True, start=1, increment=1, minvalue=1, maxvalue=2147483647, cycle=False, cache=1), primary_key=True)
     board_id: Mapped[int] = mapped_column(ForeignKey("board.id"))
     image_ids: Mapped[list] = mapped_column(ARRAY(String()), server_default=text("'{}'::character varying[]"))
-    timestamp: Mapped[datetime.datetime] = mapped_column(DateTime, index=True)
+    timestamp: Mapped[datetime.datetime] = mapped_column(DateTime, index=True, server_default=text('current_timestamp'))
     is_visible: Mapped[bool] = mapped_column(Boolean, server_default=text('true'))
     title: Mapped[Optional[str]] = mapped_column(String(150), server_default=text("''::character varying"))
-    parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("post.id"), server_default=text("'0'::integer"), index=True)
+    parent_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("post.id"), nullable=True, index=True
+    )
     text: Mapped[Optional[str]] = mapped_column('text', String(450))
-    child_ids: Mapped[Optional[list]] = mapped_column(ARRAY(Integer()))
+
+    # Отношение к родительскому посту
+    parent: Mapped[Optional["Post"]] = relationship(
+        "Post", remote_side="Post.id", backref="children", uselist=False
+    )
 
     board: Mapped['Board'] = relationship('Board', back_populates='post')
 
-    def to_dict(self):
-        result = super().to_dict()
-        # Convert datetime to ISO format string
-        if self.timestamp:
-            result['timestamp'] = self.timestamp.isoformat()
-        # Change text_ key to text for consistency
-        if 'text_' in result:
-            result['text'] = result.pop('text_')
-        # Ensure image_ids is a list
-        if 'image_ids' in result and result['image_ids'] is None:
-            result['image_ids'] = []
-        return result
+    def to_read_model(self) -> PostSchema:
+        return PostSchema(
+            id=self.id,
+            board_id=self.board_id,
+            title=self.title,
+            text=self.text,
+            image_ids=self.image_ids,
+            is_visible=self.is_visible,
+            parent_id=self.parent_id,
+            timestamp=self.timestamp if hasattr(self, 'timestamp') else None
+        )
+
+    # def to_dict(self):
+    #     result = super().to_dict()
+    #     # Convert datetime to ISO format string
+    #     if self.timestamp:
+    #         result['timestamp'] = self.timestamp.isoformat()
+    #     # Change text_ key to text for consistency
+    #     if 'text_' in result:
+    #         result['text'] = result.pop('text_')
+    #     # Ensure image_ids is a list
+    #     if 'image_ids' in result and result['image_ids'] is None:
+    #         result['image_ids'] = []
+    #     return result
 
     @classmethod
     async def create(cls, db, board_id, title=None, text=None, file_keys=None, is_visible=True, parent_id=0):
         """
-        Create a new post
+        Create a new posts
         
         Args:
             db: Database session
@@ -152,18 +171,18 @@ class Post(Base):
             title: Post title
             text: Post text
             file_keys: List of S3 file keys
-            is_visible: Whether the post is visible
-            parent_id: Parent post ID (0 for original posts)
+            is_visible: Whether the posts is visible
+            parent_id: Parent posts ID (0 for original posts)
             
         Returns:
-            Post: The created post
+            Post: The created posts
         """
         # Ensure file_keys is a list, even if empty
         if file_keys is None:
             file_keys = []
             
         # Log the file keys for debugging
-        print(f"Creating post with file keys: {file_keys}")
+        print(f"Creating posts with file keys: {file_keys}")
         
         new_post = cls(
             board_id=board_id,

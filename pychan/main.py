@@ -27,7 +27,9 @@ from pychan import routes
 from pychan.db.database import get_db, SessionDep
 from pychan.db.models import *
 
-from pychan.routes.boards import endpoints
+from pychan.routes.boards.endpoints import router as boards_router
+from pychan.routes.posts.endpoints import router as posts_router
+
 from pychan.util.redis_config import get_redis
 from pychan.util.s3_connect import S3Service
 from pychan.util.schemas import *
@@ -93,7 +95,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(endpoints.router)
+app.include_router(boards_router)
+app.include_router(posts_router)
 
 # Startup event to test connections
 @app.on_event("startup")
@@ -173,8 +176,8 @@ async def get_categories(db: SessionDep, redis: Redis = Depends(get_redis)):
         logger.error(f"Error in get_categories: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-# SELECT * FROM post
-# JOIN board ON post.board_id = board.id
+# SELECT * FROM posts
+# JOIN board ON posts.board_id = board.id
 # WHERE board.nsfw = false
 # ORDER BY timestamp DESC LIMIT 8
 
@@ -281,7 +284,7 @@ async def get_board_ops_with_replies(async_session: AsyncSession, board_id: int)
         ops_query = sa_text("""
             SELECT p.id, p.title, p.text as text_, p.timestamp, p.parent_id, p.board_id, p.is_visible, 
                   p.image_ids::text[] as image_ids, p.child_ids 
-            FROM post p
+            FROM posts p
             WHERE p.parent_id = 0 AND p.board_id = :board_id
             ORDER BY p.timestamp DESC
         """)
@@ -305,7 +308,7 @@ async def get_board_ops_with_replies(async_session: AsyncSession, board_id: int)
             replies_query = sa_text("""
                 SELECT r.id, r.title, r.text as text_, r.timestamp, r.parent_id, r.board_id, r.is_visible, 
                       r.image_ids::text[] as image_ids, r.child_ids
-                FROM post r 
+                FROM posts r 
                 WHERE r.parent_id = :op_id
                 ORDER BY r.timestamp ASC
             """)
@@ -316,7 +319,7 @@ async def get_board_ops_with_replies(async_session: AsyncSession, board_id: int)
             replies_query = sa_text(f"""
                 SELECT r.id, r.title, r.text as text_, r.timestamp, r.parent_id, r.board_id, r.is_visible, 
                       r.image_ids::text[] as image_ids, r.child_ids
-                FROM post r 
+                FROM posts r 
                 WHERE r.parent_id IN ({placeholder})
                 ORDER BY r.timestamp ASC
             """)
@@ -558,7 +561,7 @@ async def create_thread(
     MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
     ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/gif"}
 
-    # Validate post content
+    # Validate posts content
     if not title and not text and not files:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -693,9 +696,9 @@ async def create_thread(
                 # Continue with next file
                 continue
 
-        # Once files are uploaded, create post in DB
+        # Once files are uploaded, create posts in DB
         try:
-            # Create the post without explicit transaction handling
+            # Create the posts without explicit transaction handling
             # to avoid any issues with the transaction state detection
             new_post = await Post.create(
                 db=db,
@@ -756,12 +759,12 @@ async def create_thread(
                 # Construct a safe SQL query with proper quoting
                 quoted_keys = [f"'{key}'" for key in uploaded_files]
                 sql_query = sa_text(
-                    f"UPDATE post SET image_ids = ARRAY[{','.join(quoted_keys)}] WHERE id = {new_post.id}")
+                    f"UPDATE posts SET image_ids = ARRAY[{','.join(quoted_keys)}] WHERE id = {new_post.id}")
                 await db.execute(sql_query)
                 await db.commit()
-                logger.info(f"Updated image_ids in post {new_post.id} with {uploaded_files}")
+                logger.info(f"Updated image_ids in posts {new_post.id} with {uploaded_files}")
             else:
-                logger.warning(f"No files to update in post {new_post.id}")
+                logger.warning(f"No files to update in posts {new_post.id}")
 
             # Return the response with images data
             return PostResponse(
@@ -779,7 +782,7 @@ async def create_thread(
             # Rollback if there's an error
             await db.rollback()
 
-            logger.error(f"Error creating post in database: {str(db_error)}")
+            logger.error(f"Error creating posts in database: {str(db_error)}")
             logger.error(traceback.format_exc())
 
             # Clean up any uploaded files
@@ -803,7 +806,7 @@ async def create_thread(
             # Re-raise the original exception
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error creating post: {str(db_error)}"
+                detail=f"Error creating posts: {str(db_error)}"
             )
 
     except Exception as e:
@@ -962,7 +965,7 @@ async def debug_post(
     Diagnostic endpoint to debug image handling in posts.
     """
     try:
-        # 1. Try to get the post using SQLAlchemy ORM
+        # 1. Try to get the posts using SQLAlchemy ORM
         query_orm = select(Post).where(Post.id == post_id)
         result_orm = await db.execute(query_orm)
         post_orm = result_orm.scalar_one_or_none()
@@ -970,7 +973,7 @@ async def debug_post(
         # 2. Also try with a direct SQL query
         query_sql = sa_text("""
             SELECT id, title, text as text_, image_ids
-            FROM post
+            FROM posts
             WHERE id = :post_id
         """)
         result_sql = await db.execute(query_sql, {"post_id": post_id})
@@ -1283,10 +1286,10 @@ async def get_thread_by_op(
         if cached:
             return json.loads(cached)
 
-        # Get the OP post
+        # Get the OP posts
         op_query = select(Post).where(
             Post.id == op_id,
-            Post.parent_id == 0,  # Ensure it's an OP post
+            Post.parent_id == 0,  # Ensure it's an OP posts
             Post.is_visible == True
         )
         op_result = await db.execute(op_query)
