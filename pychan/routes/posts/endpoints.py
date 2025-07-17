@@ -22,10 +22,12 @@ router = APIRouter(
     tags=["Posts"],
 )
 
+
 @router.get("/latest")
 async def get_latest_posts(num: int, nsfw: bool):
-    res = await PostsRepository().get_latest(num, nsfw)
+    res = await PostService(PostsRepository).get_latest_posts(num, nsfw)
     return res
+
 
 @router.post("/new")
 async def new_post(

@@ -1,4 +1,4 @@
-from select import select
+from sqlalchemy import select
 
 from pychan.db.database import new_session
 from pychan.db.models import Post, Board
@@ -12,12 +12,12 @@ class PostsRepository(SQLAlchemyRepository):
         async with new_session() as session:
             stmt = (select(self.model)
                  .join(Board)
-                 .where(Board.nsfw is nsfw)
-                 .where(self.model.parent_id == 0)
+                 .where(Board.nsfw == nsfw)
+                 .where(self.model.parent_id.is_(None))
                  .order_by(Post.timestamp.desc())
                  .limit(num)
                  )
 
         result = await session.execute(stmt)
-        boards = result.scalars().all()
-        return boards
+        posts = result.scalars().all()
+        return posts

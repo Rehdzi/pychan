@@ -14,4 +14,8 @@ class PostService:
         post_id = await self.posts_repo.add_one(posts_dict)
         return post_id
 
+    async def get_latest_posts(self, num: int, nsfw: bool):
+        posts = await self.posts_repo.get_latest(num, nsfw)
+        return posts
+
 
