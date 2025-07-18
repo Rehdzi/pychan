@@ -18,4 +18,8 @@ class PostService:
         posts = await self.posts_repo.get_latest(num, nsfw)
         return posts
 
+    async def get_posts_by_board(self, board_id: int):
+        posts = await self.posts_repo.get_posts_by_board(board_id)
+        return posts
+
 

@@ -137,3 +137,4 @@ class Post(Base):
             parent_id=self.parent_id,
             timestamp=self.timestamp if hasattr(self, 'timestamp') else None
         )
+        

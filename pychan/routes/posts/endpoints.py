@@ -35,3 +35,8 @@ async def new_post(
 ):
     post_id = await PostService(PostsRepository).add_post(post)
     return {"post_id": post_id}
+
+@router.get("/board/{board_id}")
+async def get_posts_by_board(board_id: int):
+    res = await PostService(PostsRepository).get_posts_by_board(board_id)
+    return res

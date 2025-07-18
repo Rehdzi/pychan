@@ -73,7 +73,7 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
             )
 
 
-app = FastAPI(title="PyChan API", version="0.2a")
+app = FastAPI(title="PyChan API", version="0.2b")
 
 # Add middleware
 app.add_middleware(ErrorLoggingMiddleware)
