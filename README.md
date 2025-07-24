@@ -1,4 +1,4 @@
-# PyChan *(v0.1)*
+# PyChan *(v0.2b)*
 ---
 **A new (or yet another) imageboard engine written in Python**
 ---
