@@ -29,6 +29,7 @@ from pychan.db.models import *
 
 from pychan.routes.boards.endpoints import router as boards_router
 from pychan.routes.posts.endpoints import router as posts_router
+from pychan.routes.categories.endpoints import router as categories_router
 
 from pychan.util.redis_config import get_redis
 from pychan.util.s3_connect import S3Service
@@ -97,6 +98,7 @@ app.add_middleware(
 
 app.include_router(boards_router)
 app.include_router(posts_router)
+app.include_router(categories_router)
 
 # Startup event to test connections
 @app.on_event("startup")
@@ -181,43 +183,6 @@ async def get_categories(db: SessionDep, redis: Redis = Depends(get_redis)):
 # WHERE board.nsfw = false
 # ORDER BY timestamp DESC LIMIT 8
 
-
-@app.get("/boards/{board_id}/posts/")
-async def get_posts_by_board(
-        board_id: int,
-        db: AsyncSession = Depends(get_db),
-):
-    """Get all posts for a specific board."""
-    try:
-        # Check if board exists
-        board_result = await db.execute(select(Board).where(Board.id == board_id))
-        board = board_result.scalar_one_or_none()
-
-        if not board:
-            raise HTTPException(status_code=404, detail="Board not found")
-
-        # Query for posts with explicit awaits
-        query = (
-            select(Post)
-            .where(Post.board_id == board_id)
-            .order_by(Post.timestamp.desc())
-        )
-
-        result = await db.execute(query)
-
-        # Convert to list of dicts for safe serialization
-        posts_data = []
-        for post in result.scalars().all():
-            posts_data.append(post.to_dict())
-
-        return posts_data
-
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        logger.error(f"Error in get_posts_by_board: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 
 ## @app.get("/thread/{post_id}")

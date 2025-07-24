@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncAttrs
 import datetime
 
 from pychan.schemas.board import BoardSchema
+from pychan.schemas.category import CategorySchema
 from pychan.schemas.post import PostSchema
 
 
@@ -31,10 +32,13 @@ class Category(Base):
     board: Mapped[List['Board']] = relationship('Board', back_populates='category')
     boards = relationship("Board", back_populates="category")
 
-    def to_dict(self):
-        result = super().to_dict()
-        # Don't include relationship data by default
-        return result
+    def to_read_model(self) -> CategorySchema:
+        return CategorySchema(
+            id=self.id,
+            name=self.name,
+            is_visible=self.is_visible,
+            is_nsfw=self.is_nsfw
+        )
 
 
 class Image(Base):
@@ -137,4 +141,3 @@ class Post(Base):
             parent_id=self.parent_id,
             timestamp=self.timestamp if hasattr(self, 'timestamp') else None
         )
-        

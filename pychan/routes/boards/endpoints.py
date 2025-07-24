@@ -44,7 +44,7 @@ async def get_board(tag: str):
     return res
 
 
-@router.get("/depr/list")
+@router.get("/v1/list")
 async def get_categories_with_boards(
         ttl: int,
         db: SessionDep,
@@ -148,18 +148,3 @@ async def get_categories_with_boards(
 #         logger.error(f"Error in get_board: {str(e)}")
 #         logger.error(traceback.format_exc())
 #         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-@router.get("/latest")
-async def get_users(db: AsyncSession = Depends(get_db)):
-    query = (select(Post)
-             .join(Board)
-             .where(Board.nsfw == False)
-             .where(Post.parent_id == 0)
-             .order_by(Post.timestamp.desc())
-             .limit(8)
-             )
-
-    result = await db.execute(query)
-    boards = result.scalars().all()
-    return boards
-
