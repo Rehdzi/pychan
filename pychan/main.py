@@ -155,37 +155,11 @@ CACHE_TTL = 60 * 5  # 5 minutes
 
 @app.get("/health")
 async def health_check():
+    """
+    Check if the server is running
+    """
     return {"status": "OK"}
 
-@app.get("/categories/")
-async def get_categories(db: SessionDep, redis: Redis = Depends(get_redis)):
-    try:
-        # Try to get from cache first
-        cached = await redis.get("cache:categories")
-        if cached:
-            return json.loads(cached)
-
-        # If not in cache, query database
-        result = await db.execute(select(Category))
-        categories = result.scalars().all()
-
-        # Cache the result
-        categories_dict = [cat.to_dict() for cat in categories]
-        await redis.set("cache:categories", json.dumps(categories_dict), ex=CACHE_TTL)
-
-        return categories
-    except Exception as e:
-        logger.error(f"Error in get_categories: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-# SELECT * FROM posts
-# JOIN board ON posts.board_id = board.id
-# WHERE board.nsfw = false
-# ORDER BY timestamp DESC LIMIT 8
-
-
-
-## @app.get("/thread/{post_id}")
 
 async def get_image_urls(image_ids: list[str]) -> list[str]:
     """Generates URLs for images that exist in Redis, with batch processing."""
@@ -808,45 +782,6 @@ async def create_thread(
         )
 
 
-# Alternative implementation for getting boards with direct PostgreSQL access
-async def _get_boards_direct_db(sfw_only: bool = False) -> List[Dict[str, Any]]:
-    """
-    Direct database access bypassing SQLAlchemy ORM completely.
-    This is a fallback method when SQLAlchemy has greenlet issues.
-    """
-    import asyncpg
-    from db.database import DATABASE_URL
-
-    # Extract database connection info from SQLAlchemy URL
-    # Assumes format: postgresql+asyncpg://user:password@host:port/dbname
-    pg_url = DATABASE_URL.replace('postgresql+asyncpg://', 'postgresql://')
-
-    try:
-        # Connect directly to PostgreSQL
-        conn = await asyncpg.connect(pg_url)
-
-        try:
-            # Execute query
-            if sfw_only:
-                query = "SELECT * FROM board WHERE nsfw = false"
-            else:
-                query = "SELECT * FROM board"
-
-            rows = await conn.fetch(query)
-
-            # Convert to list of dicts
-            result = [dict(row) for row in rows]
-
-            return result
-        finally:
-            # Always close connection
-            await conn.close()
-    except Exception as e:
-        logger.error(f"Direct DB access error: {str(e)}")
-        logger.error(traceback.format_exc())
-        return []
-
-
 @app.get("/boards_direct/")
 async def get_boards_direct(
         sfw_only: bool = False,
@@ -918,111 +853,6 @@ async def direct_s3_upload(s3_service, file: UploadFile) -> str:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"All S3 upload methods failed: {str(e)}"
         )
-
-
-@app.get("/debug/post/{post_id}")
-async def debug_post(
-        post_id: int,
-        db: AsyncSession = Depends(get_db),
-        redis: Redis = Depends(get_redis)
-):
-    """
-    Diagnostic endpoint to debug image handling in posts.
-    """
-    try:
-        # 1. Try to get the posts using SQLAlchemy ORM
-        query_orm = select(Post).where(Post.id == post_id)
-        result_orm = await db.execute(query_orm)
-        post_orm = result_orm.scalar_one_or_none()
-
-        # 2. Also try with a direct SQL query
-        query_sql = sa_text("""
-            SELECT id, title, text as text_, image_ids
-            FROM posts
-            WHERE id = :post_id
-        """)
-        result_sql = await db.execute(query_sql, {"post_id": post_id})
-        post_sql = result_sql.fetchone()
-
-        # Prepare the response
-        debug_info = {
-            "post_id": post_id,
-            "post_exists_orm": post_orm is not None,
-            "post_exists_sql": post_sql is not None,
-            "orm_image_ids": post_orm.image_ids if post_orm else None,
-            "orm_image_ids_type": str(type(post_orm.image_ids)) if post_orm else None,
-            "sql_image_ids": post_sql.image_ids if post_sql else None,
-            "sql_image_ids_type": str(type(post_sql.image_ids)) if post_sql else None,
-        }
-
-        # If we have image_ids, check Redis for their existence
-        if post_orm and post_orm.image_ids:
-            # Use pipelining for faster Redis operations
-            pipe = redis.pipeline()
-            for image_id in post_orm.image_ids:
-                if image_id:
-                    await pipe.exists(f"file:{image_id}")
-                    await pipe.hgetall(f"file:{image_id}")
-
-            # Execute the pipeline
-            redis_results = await pipe.execute()
-
-            # Process results
-            redis_info = []
-            i = 0
-            while i < len(redis_results):
-                exists = redis_results[i]
-                metadata = redis_results[i + 1] if i + 1 < len(redis_results) else {}
-
-                image_id = post_orm.image_ids[i // 2]
-                full_url = f"{image_id}"
-
-                # Check if we need to prepend media/
-                if not image_id.startswith("media/"):
-                    media_url = f"media/{image_id}"
-                else:
-                    media_url = image_id
-
-                redis_info.append({
-                    "image_id": image_id,
-                    "exists_in_redis": exists,
-                    "metadata": metadata,
-                    "full_url": full_url,
-                    "media_url": media_url
-                })
-                i += 2
-
-            debug_info["redis_info"] = redis_info
-
-            # Also generate URLs to see if they work
-            image_urls = await get_image_urls(post_orm.image_ids)
-            debug_info["generated_urls"] = image_urls
-
-            # Show the actual S3 URLs we'd generate
-            s3_service = get_s3_service()
-            s3_urls = []
-            for image_id in post_orm.image_ids:
-                if image_id:
-                    try:
-                        # Ensure media/ prefix
-                        if not image_id.startswith("media/"):
-                            image_key = f"media/{image_id}"
-                        else:
-                            image_key = image_id
-
-                        s3_url = await s3_service.generate_presigned_url(image_key)
-                        s3_urls.append({"image_id": image_id, "s3_url": s3_url})
-                    except Exception as e:
-                        s3_urls.append({"image_id": image_id, "error": str(e)})
-
-            debug_info["s3_urls"] = s3_urls
-
-        return debug_info
-
-    except Exception as e:
-        logger.error(f"Error in debug_post: {str(e)}")
-        logger.error(traceback.format_exc())
-        return {"error": str(e), "traceback": traceback.format_exc()}
 
 
 async def get_image_data(image_ids: list[str]) -> list[dict]:
